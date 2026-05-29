@@ -7,13 +7,36 @@ const fs = require("fs");
 
 const app = express();
 
+const PORTS_FILE = path.join(
+  __dirname,
+  "ports.json"
+);
+
 app.use(
   cors({
     origin: "http://localhost:5173",
     credentials: true,
   })
 );
+
 app.use(express.json());
+
+function getNextPort() {
+  const data = JSON.parse(
+    fs.readFileSync(PORTS_FILE)
+  );
+
+  const port = data.nextPort;
+
+  data.nextPort++;
+
+  fs.writeFileSync(
+    PORTS_FILE,
+    JSON.stringify(data, null, 2)
+  );
+
+  return port;
+}
 
 app.get("/", (req, res) => {
   res.send("Mini Render Backend Running");
@@ -21,7 +44,12 @@ app.get("/", (req, res) => {
 
 app.post("/deploy", async (req, res) => {
   try {
-    const { repoUrl } = req.body;
+    const {
+      repoUrl,
+      rootDir,
+      startCommand,
+      envVars = [],
+    } = req.body;
 
     if (!repoUrl) {
       return res.status(400).json({
@@ -30,53 +58,108 @@ app.post("/deploy", async (req, res) => {
       });
     }
 
-    // Project Name
-    const repoName = repoUrl.split("/").pop();
+    const repoName = repoUrl
+      .split("/")
+      .pop()
+      .replace(".git", "");
 
-    // Deployment Path
-    const deployPath = path.join(__dirname, "apps", repoName);
+    const deployPath = path.join(
+      __dirname,
+      "apps",
+      repoName
+    );
 
-    // Create apps folder if not exists
     if (!fs.existsSync(path.join(__dirname, "apps"))) {
       fs.mkdirSync(path.join(__dirname, "apps"));
     }
 
-    // Clone Repo
+    if (fs.existsSync(deployPath)) {
+      fs.rmSync(deployPath, {
+        recursive: true,
+        force: true,
+      });
+    }
+
     const git = simpleGit();
 
     await git.clone(repoUrl, deployPath);
 
-    // Install Dependencies
-    exec(`cd ${deployPath} && npm install`, (err) => {
-      if (err) {
-        console.log(err);
-        return;
-      }
+    const projectPath =
+      rootDir && rootDir !== "."
+        ? path.join(deployPath, rootDir)
+        : deployPath;
 
-      // Run App
-      exec(
-        `cd ${deployPath} && pm2 start server.js --name ${repoName}`,
-        (err) => {
-          if (err) {
-            console.log(err);
-            return;
-          }
+    const assignedPort = getNextPort();
 
-          console.log(`${repoName} deployed successfully`);
+    console.log(
+      `Assigned Port: ${assignedPort}`
+    );
+
+    const finalEnvVars = [
+      ...envVars,
+      {
+        key: "PORT",
+        value: assignedPort,
+      },
+    ];
+
+    const envContent = finalEnvVars
+      .map(
+        (env) =>
+          `${env.key}=${env.value}`
+      )
+      .join("\n");
+
+    fs.writeFileSync(
+      path.join(projectPath, ".env"),
+      envContent
+    );
+
+    console.log(".env file created");
+
+    exec(
+      `cd ${projectPath} && npm install`,
+      (installErr) => {
+        if (installErr) {
+          console.log(installErr);
+          return;
         }
-      );
-    });
+
+        exec(
+          `pm2 delete ${repoName}`,
+          () => {
+            const fileToRun =
+              startCommand || "server.js";
+
+            exec(
+              `cd ${projectPath} && pm2 start ${fileToRun} --name ${repoName}`,
+              (pm2Err) => {
+                if (pm2Err) {
+                  console.log(pm2Err);
+                  return;
+                }
+
+                console.log(
+                  `${repoName} deployed successfully`
+                );
+              }
+            );
+          }
+        );
+      }
+    );
 
     res.json({
       success: true,
       message: "Deployment started",
+      assignedPort,
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     res.status(500).json({
       success: false,
-      message: "Deployment failed",
+      message: error.message,
     });
   }
 });
@@ -84,5 +167,7 @@ app.post("/deploy", async (req, res) => {
 const PORT = 7000;
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(
+    `Server running on port ${PORT}`
+  );
 });
