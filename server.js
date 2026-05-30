@@ -1,7 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const simpleGit = require("simple-git");
-const { exec } = require("child_process");
+const { exec, execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
@@ -142,6 +142,28 @@ app.post("/deploy", async (req, res) => {
                 console.log(
                   `${repoName} deployed successfully`
                 );
+                const nginxConfig = `
+location /${repoName}/ {
+    proxy_pass http://localhost:${assignedPort}/;
+
+    proxy_http_version 1.1;
+
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection 'upgrade';
+
+    proxy_set_header Host $host;
+    proxy_cache_bypass $http_upgrade;
+}
+`;
+
+fs.writeFileSync(
+  `/etc/nginx/snippets/${repoName}.conf`,
+  nginxConfig
+);
+
+console.log(
+  `NGINX route created for ${repoName}`
+);
               }
             );
           }
