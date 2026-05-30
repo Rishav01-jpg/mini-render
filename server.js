@@ -164,6 +164,23 @@ fs.writeFileSync(
 console.log(
   `NGINX route created for ${repoName}`
 );
+try {
+  execSync("sudo nginx -t");
+
+  execSync(
+    "sudo systemctl reload nginx"
+  );
+
+  console.log(
+    "NGINX reloaded successfully"
+  );
+} catch (err) {
+  console.log(
+    "NGINX reload failed"
+  );
+
+  console.log(err);
+}
               }
             );
           }
