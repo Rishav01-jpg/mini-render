@@ -14,7 +14,7 @@ const PORTS_FILE = path.join(
 
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: "*",
     credentials: true,
   })
 );
@@ -48,7 +48,7 @@ app.post("/deploy", async (req, res) => {
       repoUrl,
       rootDir,
       startCommand,
-      envVars = [],
+      envText = "",
     } = req.body;
 
     if (!repoUrl) {
@@ -69,10 +69,12 @@ app.post("/deploy", async (req, res) => {
       repoName
     );
 
+    // Create apps folder
     if (!fs.existsSync(path.join(__dirname, "apps"))) {
       fs.mkdirSync(path.join(__dirname, "apps"));
     }
 
+    // Delete old deployment
     if (fs.existsSync(deployPath)) {
       fs.rmSync(deployPath, {
         recursive: true,
@@ -95,20 +97,9 @@ app.post("/deploy", async (req, res) => {
       `Assigned Port: ${assignedPort}`
     );
 
-    const finalEnvVars = [
-      ...envVars,
-      {
-        key: "PORT",
-        value: assignedPort,
-      },
-    ];
-
-    const envContent = finalEnvVars
-      .map(
-        (env) =>
-          `${env.key}=${env.value}`
-      )
-      .join("\n");
+    const envContent =
+      envText.trim() +
+      `\nPORT=${assignedPort}`;
 
     fs.writeFileSync(
       path.join(projectPath, ".env"),
@@ -122,6 +113,7 @@ app.post("/deploy", async (req, res) => {
       (installErr) => {
         if (installErr) {
           console.log(installErr);
+
           return;
         }
 
@@ -136,12 +128,14 @@ app.post("/deploy", async (req, res) => {
               (pm2Err) => {
                 if (pm2Err) {
                   console.log(pm2Err);
+
                   return;
                 }
 
                 console.log(
                   `${repoName} deployed successfully`
                 );
+
                 const nginxConfig = `
 location /${repoName}/ {
     proxy_pass http://localhost:${assignedPort}/;
@@ -156,31 +150,32 @@ location /${repoName}/ {
 }
 `;
 
-fs.writeFileSync(
-  `/etc/nginx/snippets/${repoName}.conf`,
-  nginxConfig
-);
+                fs.writeFileSync(
+                  `/etc/nginx/snippets/${repoName}.conf`,
+                  nginxConfig
+                );
 
-console.log(
-  `NGINX route created for ${repoName}`
-);
-try {
-  execSync("sudo nginx -t");
+                console.log(
+                  `NGINX route created for ${repoName}`
+                );
 
-  execSync(
-    "sudo systemctl reload nginx"
-  );
+                try {
+                  execSync("sudo nginx -t");
 
-  console.log(
-    "NGINX reloaded successfully"
-  );
-} catch (err) {
-  console.log(
-    "NGINX reload failed"
-  );
+                  execSync(
+                    "sudo systemctl reload nginx"
+                  );
 
-  console.log(err);
-}
+                  console.log(
+                    "NGINX reloaded successfully"
+                  );
+                } catch (err) {
+                  console.log(
+                    "NGINX reload failed"
+                  );
+
+                  console.log(err);
+                }
               }
             );
           }
