@@ -47,7 +47,83 @@ function findPackageJson(dir) {
 
   return results;
 }
+function detectBestRoot(packageDirs) {
+  let bestDir = null;
+  let bestScore = -999;
 
+  for (const dir of packageDirs) {
+    const packagePath = path.join(
+      dir,
+      "package.json"
+    );
+
+    const packageJson = JSON.parse(
+      fs.readFileSync(packagePath)
+    );
+
+    let score = 0;
+
+    // Strong backend signals
+    if (
+      packageJson.scripts &&
+      packageJson.scripts.start
+    ) {
+      score += 100;
+    }
+
+    if (
+      packageJson.scripts &&
+      packageJson.scripts.dev
+    ) {
+      score += 20;
+    }
+
+    if (
+      packageJson.dependencies?.express
+    )
+      score += 50;
+
+    if (
+      packageJson.dependencies?.mongoose
+    )
+      score += 30;
+
+    if (
+      packageJson.dependencies?.cors
+    )
+      score += 20;
+
+    // Frontend signals
+    if (
+      packageJson.dependencies?.react
+    )
+      score -= 50;
+
+    if (
+      packageJson.dependencies?.vite
+    )
+      score -= 30;
+
+    if (
+      packageJson.dependencies?.next
+    )
+      score += 80;
+
+    console.log(
+      "Scanned:",
+      dir,
+      "Score:",
+      score
+    );
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestDir = dir;
+    }
+  }
+
+  return bestDir;
+}
 function detectStartCommand(projectPath) {
   const packagePath = path.join(
     projectPath,
@@ -161,13 +237,13 @@ if (rootDir) {
       ? deployPath
       : path.join(deployPath, rootDir);
 } else {
-  const packageDirs =
-    findPackageJson(deployPath);
+ const packageDirs =
+  findPackageJson(deployPath);
 
-  projectPath =
-    packageDirs.length > 0
-      ? packageDirs[0]
-      : deployPath;
+projectPath =
+  packageDirs.length > 0
+    ? detectBestRoot(packageDirs)
+    : deployPath;
 
   console.log(
     "Auto detected root:",
