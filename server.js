@@ -124,41 +124,106 @@ function detectBestRoot(packageDirs) {
 
   return bestDir;
 }
-function detectStartCommand(projectPath) {
-  const packagePath = path.join(
-    projectPath,
-    "package.json"
-  );
+function detectProjectType(projectPath) {
+  const files = fs.readdirSync(projectPath);
 
-  if (fs.existsSync(packagePath)) {
-    const packageJson = JSON.parse(
-      fs.readFileSync(packagePath)
-    );
+  if (files.includes("package.json")) {
+    return "node";
+  }
+
+  if (
+    files.includes("requirements.txt") ||
+    files.includes("app.py") ||
+    files.includes("main.py")
+  ) {
+    return "python";
+  }
+
+  if (
+    files.includes("pom.xml") ||
+    files.includes("build.gradle")
+  ) {
+    return "java";
+  }
+
+  if (files.includes("composer.json")) {
+    return "php";
+  }
+
+  if (files.includes("go.mod")) {
+    return "go";
+  }
+
+  if (files.includes("Cargo.toml")) {
+    return "rust";
+  }
+
+  if (files.includes("index.html")) {
+    return "static";
+  }
+
+  return "unknown";
+}
+function detectInstallCommand(projectType) {
+  switch (projectType) {
+    case "node":
+      return "npm install";
+
+    case "python":
+      return "pip install -r requirements.txt";
+
+    case "java":
+      return "mvn install";
+
+    case "php":
+      return "composer install";
+
+    case "go":
+      return "go mod tidy";
+
+    case "rust":
+      return "cargo build";
+
+    default:
+      return null;
+  }
+}
+function detectStartCommand(
+  projectPath,
+  projectType
+) {
+  if (projectType === "node") {
+    return "npm";
+  }
+
+  if (projectType === "python") {
+    if (
+      fs.existsSync(path.join(projectPath, "app.py"))
+    ) {
+      return "python app.py";
+    }
 
     if (
-      packageJson.scripts &&
-      packageJson.scripts.start
+      fs.existsSync(path.join(projectPath, "main.py"))
     ) {
-      return "npm";
+      return "python main.py";
     }
   }
 
-  const files = [
-    "server.js",
-    "index.js",
-    "app.js",
-    "main.js",
-    "server/index.js",
-  ];
+  if (projectType === "java") {
+    return "mvn spring-boot:run";
+  }
 
-  for (const file of files) {
-    if (
-      fs.existsSync(
-        path.join(projectPath, file)
-      )
-    ) {
-      return file;
-    }
+  if (projectType === "php") {
+    return "php -S 0.0.0.0:$PORT";
+  }
+
+  if (projectType === "go") {
+    return "go run main.go";
+  }
+
+  if (projectType === "rust") {
+    return "cargo run";
   }
 
   return null;
@@ -250,7 +315,13 @@ projectPath =
     projectPath
   );
 }
+const projectType =
+  detectProjectType(projectPath);
 
+console.log(
+  "Detected project type:",
+  projectType
+);
     const assignedPort = getNextPort();
 
     console.log(
@@ -268,8 +339,16 @@ projectPath =
 
     console.log(".env file created");
 
-    exec(
-      `cd ${projectPath} && npm install`,
+   const installCommand =
+  detectInstallCommand(projectType);
+
+const runInstall =
+  installCommand
+    ? `cd ${projectPath} && ${installCommand}`
+    : `cd ${projectPath}`;
+
+exec(
+  runInstall,
       (installErr) => {
         if (installErr) {
           console.log(installErr);
@@ -282,7 +361,10 @@ projectPath =
           () => {
           let detectedCommand =
   startCommand ||
-  detectStartCommand(projectPath);
+  detectStartCommand(
+  projectPath,
+  projectType
+);
 
 console.log(
   "Detected start command:",
@@ -298,10 +380,10 @@ if (!detectedCommand) {
 
 let pm2Command;
 
-if (detectedCommand === "npm") {
+if (projectType === "node") {
   pm2Command = `cd ${projectPath} && pm2 start npm --name ${repoName} -- start`;
 } else {
-  pm2Command = `cd ${projectPath} && pm2 start ${detectedCommand} --name ${repoName}`;
+  pm2Command = `cd ${projectPath} && pm2 start "${detectedCommand}" --name ${repoName} --interpreter bash`;
 }
 
 exec(
