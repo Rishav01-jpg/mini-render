@@ -48,197 +48,42 @@ function findPackageJson(dir) {
   return results;
 }
 
-function detectBestRoot(packageDirs) {
-  let bestDir = null;
-  let bestScore = -999;
+function detectStartCommand(projectPath) {
+  const packagePath = path.join(
+    projectPath,
+    "package.json"
+  );
 
-  for (const dir of packageDirs) {
-    const packagePath = path.join(
-      dir,
-      "package.json"
-    );
-
-    const packageJson = JSON.parse(
-      fs.readFileSync(packagePath)
-    );
-
-    let score = 0;
-
-    if (packageJson.scripts?.start)
-      score += 100;
-
-    if (packageJson.scripts?.dev)
-      score += 20;
-
-    if (packageJson.dependencies?.express)
-      score += 50;
-
-    if (packageJson.dependencies?.mongoose)
-      score += 30;
-
-    if (packageJson.dependencies?.cors)
-      score += 20;
-
-    if (packageJson.dependencies?.react)
-      score -= 50;
-
-    if (
-      packageJson.dependencies?.vite ||
-      packageJson.devDependencies?.vite
-    )
-      score -= 30;
-
-    if (packageJson.dependencies?.next)
-      score += 80;
-
-    console.log(
-      "Scanned:",
-      dir,
-      "Score:",
-      score
-    );
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestDir = dir;
-    }
-  }
-
-  return bestDir;
-}
-
-function detectProjectType(projectPath) {
-  const files = fs.readdirSync(projectPath);
-if (files.includes("Dockerfile"))
-  return "docker";
-
-  if (files.includes("package.json"))
-    return "node";
-
-  if (
-    files.includes("requirements.txt") ||
-files.includes("app.py") ||
-files.includes("main.py") ||
-files.includes("manage.py")
-  )
-    return "python";
-
-  if (
-    files.includes("pom.xml") ||
-    files.includes("build.gradle")
-  )
-    return "java";
-
-  if (files.includes("composer.json"))
-    return "php";
-
-  if (files.includes("go.mod"))
-    return "go";
-
-  if (files.includes("Cargo.toml"))
-    return "rust";
-
-  if (files.includes("index.html"))
-    return "static";
-
-  return "unknown";
-}
-
-function detectInstallCommand(projectType) {
-  switch (projectType) {
-    case "docker":
-  return null;
-
-    case "node":
-      return "npm install";
-
-    case "python":
-      return "pip install -r requirements.txt";
-
-    case "java":
-      return "mvn install";
-
-    case "php":
-      return "composer install";
-
-    case "go":
-      return "go mod tidy";
-
-    case "rust":
-      return "cargo build";
-
-    default:
-      return null;
-  }
-}
-
-function detectStartCommand(
-  projectPath,
-  projectType,
-  assignedPort,
-  repoName
-) {
-  if (projectType === "node") {
-    const packagePath = path.join(
-      projectPath,
-      "package.json"
-    );
-
+  if (fs.existsSync(packagePath)) {
     const packageJson = JSON.parse(
       fs.readFileSync(packagePath)
     );
 
     if (
-      packageJson.dependencies?.vite ||
-      packageJson.devDependencies?.vite
+      packageJson.scripts &&
+      packageJson.scripts.start
     ) {
-     return `npm run dev -- --host 0.0.0.0 --port ${assignedPort}`;
-    }
-
-    if (packageJson.scripts?.start) {
       return "npm";
     }
   }
 
-  if (projectType === "python") {
-  if (
-    fs.existsSync(path.join(projectPath, "manage.py"))
-  ) {
-    return `python manage.py runserver 0.0.0.0:${assignedPort}`;
-  }
+  const files = [
+    "server.js",
+    "index.js",
+    "app.js",
+    "main.js",
+    "server/index.js",
+  ];
 
-  if (
-    fs.existsSync(path.join(projectPath, "app.py"))
-  ) {
-    return "python app.py";
+  for (const file of files) {
+    if (
+      fs.existsSync(
+        path.join(projectPath, file)
+      )
+    ) {
+      return file;
+    }
   }
-
-  if (
-    fs.existsSync(path.join(projectPath, "main.py"))
-  ) {
-    return `uvicorn main:app --host 0.0.0.0 --port ${assignedPort}`;
-  }
-}
-
-  if (projectType === "java") {
-    return "mvn spring-boot:run";
-  }
-
-  if (projectType === "php") {
-    return `php -S 0.0.0.0:${assignedPort}`;
-  }
-
-  if (projectType === "go") {
-    return "go run main.go";
-  }
-
-  if (projectType === "rust") {
-    return "cargo run";
-  }
-
-  if (projectType === "docker") {
-  return `docker build -t ${repoName} . && docker run -d -p ${assignedPort}:${assignedPort} ${repoName}`;
-}
 
   return null;
 }
@@ -291,10 +136,12 @@ app.post("/deploy", async (req, res) => {
       repoName
     );
 
+    // Create apps folder
     if (!fs.existsSync(path.join(__dirname, "apps"))) {
       fs.mkdirSync(path.join(__dirname, "apps"));
     }
 
+    // Delete old deployment
     if (fs.existsSync(deployPath)) {
       fs.rmSync(deployPath, {
         recursive: true,
@@ -306,35 +153,27 @@ app.post("/deploy", async (req, res) => {
 
     await git.clone(repoUrl, deployPath);
 
-    let projectPath;
+   let projectPath;
 
-    if (rootDir) {
-      projectPath =
-        rootDir === "."
-          ? deployPath
-          : path.join(deployPath, rootDir);
-    } else {
-      const packageDirs =
-        findPackageJson(deployPath);
+if (rootDir) {
+  projectPath =
+    rootDir === "."
+      ? deployPath
+      : path.join(deployPath, rootDir);
+} else {
+  const packageDirs =
+    findPackageJson(deployPath);
 
-      projectPath =
-        packageDirs.length > 0
-          ? detectBestRoot(packageDirs)
-          : deployPath;
+  projectPath =
+    packageDirs.length > 0
+      ? packageDirs[0]
+      : deployPath;
 
-      console.log(
-        "Auto detected root:",
-        projectPath
-      );
-    }
-
-    const projectType =
-      detectProjectType(projectPath);
-
-    console.log(
-      "Detected project type:",
-      projectType
-    );
+  console.log(
+    "Auto detected root:",
+    projectPath
+  );
+}
 
     const assignedPort = getNextPort();
 
@@ -353,100 +192,58 @@ app.post("/deploy", async (req, res) => {
 
     console.log(".env file created");
 
-    if (projectType === "static") {
-      const nginxConfig = `
-location /${repoName}/ {
-    root ${deployPath};
-    index index.html;
-}
-`;
+    exec(
+      `cd ${projectPath} && npm install`,
+      (installErr) => {
+        if (installErr) {
+          console.log(installErr);
 
-      fs.writeFileSync(
-        `/etc/nginx/snippets/${repoName}.conf`,
-        nginxConfig
-      );
-
-      execSync("sudo nginx -t");
-      execSync(
-        "sudo systemctl reload nginx"
-      );
-
-      return res.json({
-        success: true,
-        message: "Static site deployed",
-      });
-    }
-
-    const installCommand =
-      detectInstallCommand(projectType);
-
-    const runInstall = installCommand
-      ? `cd ${projectPath} && ${installCommand}`
-      : `cd ${projectPath}`;
-
-    exec(runInstall, (installErr) => {
-      if (installErr) {
-        console.log(installErr);
-        return;
-      }
-
-      exec(`pm2 delete ${repoName}`, () => {
-        const detectedCommand =
-  startCommand ||
-  detectStartCommand(
-    projectPath,
-    projectType,
-    assignedPort,
-    repoName
-  );
-
-        console.log(
-          "Detected start command:",
-          detectedCommand
-        );
-
-        if (!detectedCommand) {
-          console.log(
-            "Could not detect start command"
-          );
           return;
         }
 
-        let pm2Command;
+        exec(
+          `pm2 delete ${repoName}`,
+          () => {
+          let detectedCommand =
+  startCommand ||
+  detectStartCommand(projectPath);
 
-        if (detectedCommand === "npm") {
-          pm2Command = `cd ${projectPath} && pm2 start npm --name ${repoName} -- start`;
+console.log(
+  "Detected start command:",
+  detectedCommand
+);
 
-        } else if (
-          detectedCommand.startsWith(
-            "npm run"
-          )
-        ) {
-          const scriptName =
-            detectedCommand.replace(
-              "npm run ",
-              ""
-            );
+if (!detectedCommand) {
+  console.log(
+    "Could not detect start command"
+  );
+  return;
+}
 
-          pm2Command = `cd ${projectPath} && pm2 start npm --name ${repoName} -- run ${scriptName}`;
+let pm2Command;
 
-        } else {
-          pm2Command = `cd ${projectPath} && pm2 start "${detectedCommand}" --name ${repoName} --interpreter bash`;
-        }
+if (detectedCommand === "npm") {
+  pm2Command = `cd ${projectPath} && pm2 start npm --name ${repoName} -- start`;
+} else {
+  pm2Command = `cd ${projectPath} && pm2 start ${detectedCommand} --name ${repoName}`;
+}
 
-        exec(pm2Command, (pm2Err) => {
-          if (pm2Err) {
-            console.log(pm2Err);
-            return;
-          }
+exec(
+  pm2Command,
+              (pm2Err) => {
+                if (pm2Err) {
+                  console.log(pm2Err);
 
-          console.log(
-            `${repoName} deployed successfully`
-          );
+                  return;
+                }
 
-          const nginxConfig = `
+                console.log(
+                  `${repoName} deployed successfully`
+                );
+
+                const nginxConfig = `
 location /${repoName}/ {
-    proxy_pass http://localhost:${assignedPort};
+    proxy_pass http://localhost:${assignedPort}/;
 
     proxy_http_version 1.1;
 
@@ -458,34 +255,38 @@ location /${repoName}/ {
 }
 `;
 
-          fs.writeFileSync(
-            `/etc/nginx/snippets/${repoName}.conf`,
-            nginxConfig
-          );
+                fs.writeFileSync(
+                  `/etc/nginx/snippets/${repoName}.conf`,
+                  nginxConfig
+                );
 
-          console.log(
-            `NGINX route created for ${repoName}`
-          );
+                console.log(
+                  `NGINX route created for ${repoName}`
+                );
 
-          try {
-            execSync("sudo nginx -t");
+                try {
+                  execSync("sudo nginx -t");
 
-            execSync(
-              "sudo systemctl reload nginx"
+                  execSync(
+                    "sudo systemctl reload nginx"
+                  );
+
+                  console.log(
+                    "NGINX reloaded successfully"
+                  );
+                } catch (err) {
+                  console.log(
+                    "NGINX reload failed"
+                  );
+
+                  console.log(err);
+                }
+              }
             );
-
-            console.log(
-              "NGINX reloaded successfully"
-            );
-          } catch (err) {
-            console.log(
-              "NGINX reload failed"
-            );
-            console.log(err);
           }
-        });
-      });
-    });
+        );
+      }
+    );
 
     res.json({
       success: true,
